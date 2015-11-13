@@ -1,4 +1,7 @@
 # auto-pirates
+
+![auto-pirates logo](https://avatars2.githubusercontent.com/u/15257265?v=3&s=200)
+
 Autonomous Boat Project
 
 This repository contains the documentation of the Autonomous boat project.
