@@ -10,4 +10,6 @@ You can find --
 * Individual Lab Presentations 
 * Critical Design Review
 
-ａｎｄ ｏｔｈｅｒ ｍｉｓｃｅｌｌａｎｅｏｕｓ ｄｏｃｕｍｅｎｔｓ．
+and other miscellaneous documents.
+
+
