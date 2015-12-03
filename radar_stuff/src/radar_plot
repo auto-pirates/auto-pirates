@@ -1,0 +1,166 @@
+#!/usr/bin/env python
+import rospy
+#from std_msgs.msg import String
+from std_msgs.msg import UInt8MultiArray
+
+import numpy as np
+import math
+import signal
+import sys
+import time
+import threading
+from scipy.interpolate import interp1d
+from scipy.ndimage import map_coordinates
+from cv_bridge import CvBridge, CvBridgeError
+from sensor_msgs.msg import Image
+import cv2
+
+
+lock = threading.Lock()
+
+scan = []
+
+def conv_angle(f):
+    if f < 0:
+        return f + (2*np.pi)
+    else:
+        return f
+
+conv_angle = np.vectorize(conv_angle)
+
+def polar2cartesian(r, t, grid, x, y, order=3):
+
+    X, Y = np.meshgrid(x, y)
+
+
+    new_r = np.sqrt(X*X+Y*Y)
+    new_t = np.arctan2(Y, X)
+    #map our cartesian grid to r, theta values
+
+    new_t = conv_angle(new_t)
+    #convert angles to [0, 2pi]
+
+    ir = interp1d(r, np.arange(len(r)), bounds_error=False)
+    it = interp1d(t, np.arange(len(t)))
+
+
+    new_ir = ir(new_r.ravel())
+    new_it = it(new_t.ravel())
+
+    #new_ir[new_r.ravel() > r.max()] = len(r)-1
+    #new_ir[new_r.ravel() < r.min()] = 0
+
+
+    a = map_coordinates(grid, np.array([new_it, new_ir]),
+                            order=order).reshape(new_r.shape)
+    
+
+    return a
+
+def callback(data):
+
+    #need to convert from hex string for some reason
+    #my_list = data.data.split(",")
+    
+    new_data = []
+    new_data = map(ord, data.data)
+
+    #print len(new_data)
+    if len(new_data) != 1048576:
+        return
+
+    global scan
+
+    lock.acquire()
+    #needs to be float or wont work??
+    scan = np.array(new_data, dtype=float).reshape(2048, 512);
+    lock.release()
+
+    '''
+    np.set_printoptions(threshold=np.inf, linewidth=np.inf)  # turn off summarization, line-wrapping
+    with open('test.txt', 'w') as f:
+        f.write(np.array2string(scan, separator=', '))
+    '''
+
+
+def signal_handler(signal, frame):
+    sys.exit(0)
+
+    
+def listener():
+
+    # In ROS, nodes are uniquely named. If two nodes with the same
+    # node are launched, the previous one is kicked off. The
+    # anonymous=True flag means that rospy will choose a unique
+    # name for our 'listener' node so that multiple listeners can
+    # run simultaneously.
+    rospy.init_node('listener') 
+    pub = rospy.Publisher('radar_raw_will', Image, queue_size=1)
+    sub = rospy.Subscriber("raw_radar_image", UInt8MultiArray, callback, queue_size=10, buff_size=5000000)
+
+    # spin() simply keeps python from exiting until this node is stopped
+    #rospy.spin()
+
+    #define polar grid
+    nr = 512    
+    nt = 2048
+
+
+    r = np.linspace(0., 100., nr)
+    t = np.linspace(0., 2*np.pi, nt)
+
+    # Define new cartesian grid
+    nx = 250
+    ny = 250
+
+    x = np.linspace(-125., 125., nx)
+    y = np.linspace(-125., 125., ny)
+
+
+    global scan
+ 
+    scan = np.zeros((2048, 512));
+    
+    
+    for i in range(2048):
+        for j in range(512):
+            bit = j >> 5
+            if ((i >> 3) & (2 << bit)) > 0:
+                scan[i][j] = 200.
+            else:
+                scan[i][j] = 0
+    #print scan
+    
+    
+    while not rospy.is_shutdown():
+
+
+        lock.acquire()
+        if scan.shape == (2048,512):
+            z = scan
+        lock.release()
+
+        t0 = time.time()
+        deg_per_spoke = float(360) / 2048
+        #adjust for heading
+        num_roll = int(round(-90 / deg_per_spoke))
+        z = np.roll(z, num_roll, axis=0)
+
+        z[:, -1] = 0
+        t0 = time.time()
+        img = polar2cartesian(r, t, z, x, y, order=0)
+        #cv2.namedWindow('image', cv2.WINDOW_NORMAL)
+        t1 = time.time()
+	'''
+        cv2.imshow("image", img)
+        cv2.waitKey(1)
+	'''
+	image = np.dstack((img.astype(np.uint8), img.astype(np.uint8), img.astype(np.uint8)))
+	im = CvBridge().cv2_to_imgmsg(image, "bgr8")
+	pub.publish(im)	
+
+        print t1-t0
+            
+if __name__ == '__main__':
+    signal.signal(signal.SIGINT, signal_handler)
+    listener()
